@@ -1,9 +1,10 @@
-#include <emscripten.h>
+#include <stdio.h>
 
 int x = 5;
 
 extern int f(void);
 
-int main(int argc, char **argv) {
+int main(void) {
+	puts("hello from main");
 	return f();
 }
