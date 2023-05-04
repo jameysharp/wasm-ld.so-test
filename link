@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+
+echo "(component"
+
+sed '1s/(module/(core module $MAIN/' main.wat
+sed '1s/(module/(core module $LIB/' lib.wat
+
+cat <<"EOF"
+(core module $PREVIEW1
+  (func (export "proc_exit") (param i32)
+    ;; TODO: use a `canon lower` import
+    unreachable
+  )
+  (func (export "fd_write") (param i32 i32 i32 i32) (result i32)
+    ;; TODO: use a `canon lower` import
+    unreachable
+    ;;i32.const 0
+  )
+)
+(core instance $preview1 (instantiate $PREVIEW1))
+
+(core module $ENV
+  ;; shared across all modules
+  (memory (export "memory") 256 256)
+  (table $funcs (export "__indirect_function_table") 5 funcref)
+  (global (export "__stack_pointer") (mut i32) i32.const 65536)
+
+  ;; pre-allocated space in memory
+  (global (export "main:memory_base") i32 i32.const 65536) ;; initial __stack_pointer
+  (global (export "lib:memory_base") i32 i32.const 67264) ;; main:memory_base + main memorysize
+  (global (export "__heap_base") (mut i32) i32.const 67280) ;; lib:memory_base + lib memorysize, rounded up to 16-byte alignment
+
+  ;; pre-allocated space in __indirect_function_table
+  (global $puts (export "PLT:puts") i32 i32.const 0)
+  (global (export "main:table_base") i32 i32.const 1)
+
+  ;; Global Offset Table (GOT.mem)
+  (global (export "x") (mut i32) i32.const 0)
+
+  ;; cycle-breaking
+  (type $i32=>i32 (func (param i32) (result i32)))
+  (func (export "puts") (param i32) (result i32)
+    global.get $puts
+    local.get 0
+    call_indirect $funcs (type $i32=>i32)
+  )
+)
+(core instance $env (instantiate $ENV))
+
+(core instance $lib (instantiate $LIB
+  (with "GOT.mem" (instance $env))
+  (with "env" (instance
+    (export "memory" (memory $env "memory"))
+    (export "__memory_base" (global $env "lib:memory_base"))
+    (export "puts" (func $env "puts"))
+  ))
+))
+
+(core instance $main (instantiate $MAIN
+  (with "GOT.mem" (instance $env))
+  (with "wasi_snapshot_preview1" (instance $preview1))
+  (with "env" (instance
+    (export "memory" (memory $env "memory"))
+    (export "__indirect_function_table" (table $env "__indirect_function_table"))
+    (export "__stack_pointer" (global $env "__stack_pointer"))
+    (export "__memory_base" (global $env "main:memory_base"))
+    (export "__table_base" (global $env "main:table_base"))
+    (export "f" (func $lib "f"))
+  ))
+))
+
+(core module $INIT
+  (import "env" "__indirect_function_table" (table $funcs 1 funcref))
+  (import "main" "__wasm_apply_data_relocs" (func $main:reloc))
+  (import "lib" "__wasm_apply_data_relocs" (func $lib:reloc))
+
+  (import "env" "main:memory_base" (global $main:memory_base i32))
+  (import "main" "x" (global $x:def i32))
+  (import "env" "x" (global $x:got (mut i32)))
+
+  (type $i32=>i32 (func (param i32) (result i32)))
+  (import "main" "puts" (func $puts:def (type $i32=>i32)))
+  (import "env" "PLT:puts" (global $puts:plt i32))
+
+  (import "main" "_start" (func $start))
+
+  (func (export "start") (result i32)
+    global.get $main:memory_base
+    global.get $x:def
+    i32.add
+    global.set $x:got
+
+    global.get $puts:plt
+    ref.null func
+    ;;ref.func $puts:def ;; I don't know why this doesn't validate
+    table.set $funcs
+
+    call $main:reloc
+    call $lib:reloc
+
+    call $start
+    i32.const 0 ;; "ok"
+  )
+)
+(core instance $init (instantiate $INIT
+  (with "env" (instance $env))
+  (with "main" (instance $main))
+  (with "lib" (instance $lib))
+))
+
+(type $main (result))
+(func $start (result $main) (canon lift (core func $init "start")))
+(export "run" (func $start))
+EOF
+
+echo ")"
