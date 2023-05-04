@@ -1,4 +1,4 @@
-component.wat: main.wat lib.wat
+component.wat: link main.wat lib.wat
 	./link > $@
 
 main.wasm: lib.so

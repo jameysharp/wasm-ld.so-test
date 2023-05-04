@@ -11,39 +11,25 @@ cat <<"EOF"
     ;; TODO: use a `canon lower` import
     unreachable
   )
-  (func (export "fd_write") (param i32 i32 i32 i32) (result i32)
-    ;; TODO: use a `canon lower` import
-    unreachable
-    ;;i32.const 0
-  )
 )
 (core instance $preview1 (instantiate $PREVIEW1))
 
 (core module $ENV
   ;; shared across all modules
   (memory (export "memory") 256 256)
-  (table $funcs (export "__indirect_function_table") 5 funcref)
+  (table $funcs (export "__indirect_function_table") 4 funcref)
   (global (export "__stack_pointer") (mut i32) i32.const 65536)
 
   ;; pre-allocated space in memory
   (global (export "main:memory_base") i32 i32.const 65536) ;; initial __stack_pointer
-  (global (export "lib:memory_base") i32 i32.const 67264) ;; main:memory_base + main memorysize
-  (global (export "__heap_base") (mut i32) i32.const 67280) ;; lib:memory_base + lib memorysize, rounded up to 16-byte alignment
+  (global (export "lib:memory_base") i32 i32.const 66052) ;; main:memory_base + main memorysize
+  (global (export "__heap_base") (mut i32) i32.const 66052) ;; lib:memory_base + lib memorysize, rounded up to 16-byte alignment
 
   ;; pre-allocated space in __indirect_function_table
-  (global $puts (export "PLT:puts") i32 i32.const 0)
-  (global (export "main:table_base") i32 i32.const 1)
+  (global (export "main:table_base") i32 i32.const 0)
 
   ;; Global Offset Table (GOT.mem)
   (global (export "x") (mut i32) i32.const 0)
-
-  ;; cycle-breaking
-  (type $i32=>i32 (func (param i32) (result i32)))
-  (func (export "puts") (param i32) (result i32)
-    global.get $puts
-    local.get 0
-    call_indirect $funcs (type $i32=>i32)
-  )
 )
 (core instance $env (instantiate $ENV))
 
@@ -52,7 +38,6 @@ cat <<"EOF"
   (with "env" (instance
     (export "memory" (memory $env "memory"))
     (export "__memory_base" (global $env "lib:memory_base"))
-    (export "puts" (func $env "puts"))
   ))
 ))
 
@@ -78,10 +63,6 @@ cat <<"EOF"
   (import "main" "x" (global $x:def i32))
   (import "env" "x" (global $x:got (mut i32)))
 
-  (type $i32=>i32 (func (param i32) (result i32)))
-  (import "main" "puts" (func $puts:def (type $i32=>i32)))
-  (import "env" "PLT:puts" (global $puts:plt i32))
-
   (import "main" "_start" (func $start))
 
   (func (export "start") (result i32)
@@ -89,11 +70,6 @@ cat <<"EOF"
     global.get $x:def
     i32.add
     global.set $x:got
-
-    global.get $puts:plt
-    ref.null func
-    ;;ref.func $puts:def ;; I don't know why this doesn't validate
-    table.set $funcs
 
     call $main:reloc
     call $lib:reloc
